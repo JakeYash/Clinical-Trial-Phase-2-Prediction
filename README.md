@@ -44,20 +44,6 @@ round trips — roughly two hours. Use `--max-trials` for a first test, or
 5. **Merge** (`src/merge.py`) — joins PubMed summary stats onto the trial
    table, writes `data/processed/trials_dataset.csv`.
 
-## Possible Issues / Future Additions
-
-1. **PubMed drug-name matching is free-text search**, not entity-linked —
-   This just means the data we pull is based on text in the article title instead of a field for the article.
-2. **Maybe add other forms of public sentiment**
-   We could try looking at more informal sources like reddit maybe?
-
-## Next Steps
-1. **Try to apply heavier filtering**
-   Currently, the outside articles we pull from the Entrez API can technically have articles from the makers of the drug, something we are trying to avoid. Also, some data points have no start date so we ignore them, not sure what we could really do about that though.
-2. **Visualize the data**
-   Just a little bit to actually parse those csvs and get an idea of the shape of our data. I would like if this was done in a separate py file. Also, getting the overall stats on the dataset is a must (number of points for example). 
-2. **Start thinking about how we are going to analyze this data for the impact of the outside source articles**
-
 ## Output: `data/processed/trials_dataset.csv`
 
 One row per phase 2 trial. Key columns:
@@ -84,3 +70,18 @@ One row per phase 2 trial. Key columns:
 Raw abstract text for sentiment scoring lives in
 `data/raw/pubmed_abstracts.jsonl` (`{nct_id, pmid, title, abstract, journal,
 pub_year}`), keyed back to `trials_dataset.csv` by `nct_id`.
+
+
+## Possible Issues / Future Additions
+
+1. **PubMed drug-name matching is free-text search**, not entity-linked —
+   This just means the data we pull is based on text in the article title instead of a field for the article.
+2. **Maybe add other forms of public sentiment**
+   We could try looking at more informal sources like reddit maybe?
+
+## Next Steps
+1. **Try to apply heavier filtering**
+   Currently, the outside articles we pull from the Entrez API can technically have articles from the makers of the drug, something we are trying to avoid. Also, some data points have no start date so we ignore them, not sure what we could really do about that though.
+2. **Visualize the data**
+   Just a little bit to actually parse those csvs and get an idea of the shape of our data. I would like if this was done in a separate py file. Also, getting the overall stats on the dataset is a must (number of points for example). 
+3. **Start thinking about how we are going to analyze this data for the impact of the outside source articles**
