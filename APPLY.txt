@@ -1,0 +1,7 @@
+Based on upstream commit 7a4a4a90853611600d89acaa0b7cb0f3380655fa.
+Either use the included updated source folder, or from your clean existing repository run:
+  git apply --check /path/to/heavier-filtering.patch
+  git apply /path/to/heavier-filtering.patch
+Then install requirements and run:
+  python -m unittest discover -s tests -v
+See README.md for filtering configuration and limitations. No live dataset collection was run.

@@ -1,0 +1,403 @@
+diff --git a/README.md b/README.md
+index 2e7327d..f890a0b 100644
+--- a/README.md
++++ b/README.md
+@@ -40,7 +40,8 @@ round trips — roughly two hours. Use `--max-trials` for a first test, or
+    essential field.
+ 4. **Collect PubMed discussion** (`src/pubmed_client.py`) — for each trial's
+    primary drug (skipping placebo/comparator arms), pulls titles/abstracts
+-   dated before that trial's `start_date`.
++   dated strictly before that trial's `start_date`, excluding disclosed ties
++   to industry sponsors/collaborators and configured manufacturers.
+ 5. **Merge** (`src/merge.py`) — joins PubMed summary stats onto the trial
+    table, writes `data/processed/trials_dataset.csv`.
+ 
+@@ -80,9 +81,58 @@ pub_year}`), keyed back to `trials_dataset.csv` by `nct_id`.
+    We could try looking at more informal sources like reddit maybe?
+ 
+ ## Next Steps
+-1. **Try to apply heavier filtering**
+-   Currently, the outside articles we pull from the Entrez API can technically have articles from the makers of the drug, something we are trying to avoid. Also, some data points have no start date so we ignore them, not sure what we could really do about that though.
++1. **Heavier filtering implemented** — see the screening and missing-date policy below.
+ 2. **Visualize the data**
+    Just a little bit to actually parse those csvs and get an idea of the shape of our data. I would like if this was done in a separate py file. Also, getting the overall stats on the dataset is a must (number of points for example). 
+ 3. **Start thinking about how we are going to analyze this data for the impact of the outside source articles**
+ 
++
++
++## Article screening and missing dates
++
++The pipeline extracts author/investigator affiliations, grant agencies, and
++conflict-of-interest statements from PubMed XML. Articles matching an industry
++lead sponsor, industry collaborator, or a configured drug manufacturer in those
++fields are excluded. A company appearing only in a title or abstract is not
++sufficient to exclude an article. Matching ignores capitalization, punctuation,
++and common corporate suffixes, and uses token boundaries.
++
++Add reviewed manufacturer names and aliases in `config.py`, for example:
++
++```python
++DRUG_MANUFACTURERS = {
++    "example drug": ["Example Pharma", "Example Pharma's former name"],
++}
++```
++
++Use the primary drug name, lower-cased, as the key. Industry sponsors are only
++proxies for manufacturers; this configuration is needed for known makers that
++are not listed as sponsors/collaborators, including academic-led trials. No
++manufacturer database or ownership/alias inference is built in.
++
++Retained articles in `data/raw/pubmed_abstracts.jsonl` include affiliations,
++funding agencies, conflict disclosures, and `industry_screening`:
++`no_disclosed_match` or `no_known_organizations`. Neither proves independence:
++PubMed disclosures may be missing/incomplete. Conservative disclosure matching
++can also exclude statements that negate a relationship; review exclusions as
++needed. Excluded articles and matching organization/field pairs are saved to
++`data/raw/pubmed_excluded.jsonl`, linked by `nct_id` and `pmid`.
++
++Trials missing a start date remain in the dataset. Their PubMed search is
++skipped, `pubmed_collection_status` is `missing_or_invalid_start_date`, and
++article counts are blank (unknown), **not zero**. Successful collections have
++status `collected`; zero then means no retained articles from the capped search.
++Downstream analysis should explicitly handle missing counts or restrict to
++`collected` trials. No dates are inferred from completion dates or today's date.
++
++Month-only and year-only start dates use the first day of that month/year as
++the earliest possible start. The inclusive Entrez upper bound is one day before
++that cutoff, excluding same-day publications. The existing three-year lookback
++and 200-result cap remain. This is a publication-date window, not proof of when
++an article first became publicly accessible.
++
++Run the offline regression tests:
++
++```bash
++python -m unittest discover -s tests -v
++```
+diff --git a/config.py b/config.py
+index bb277bc..44ef7e8 100644
+--- a/config.py
++++ b/config.py
+@@ -30,7 +30,6 @@ CTGOV_REQUEST_DELAY_SEC = 0.2  # be polite; no published hard rate limit but avo
+ REQUIRED_NON_NULL_FIELDS = [
+     "nct_id",
+     "label",
+-    "start_date",
+     "condition",
+     "intervention_name",
+ ]
+@@ -43,3 +42,8 @@ ENTREZ_REQUEST_DELAY_SEC = 0.11 if NCBI_API_KEY else 0.35  # 10/sec with key, 3/
+ PUBMED_RETMAX_PER_DRUG = 200          # cap per intervention to keep volume sane
+ PUBMED_LOOKBACK_DAYS = 3 * 365        # only discussion in the N days before phase 2 start
+ 
++
++# Reviewed manufacturer names/aliases keyed by lower-case drug name. Include
++# subsidiaries and historical names where known; sponsors are not always makers.
++DRUG_MANUFACTURERS = {}
++RAW_PUBMED_EXCLUDED_PATH = DATA_RAW_DIR / "pubmed_excluded.jsonl"
+diff --git a/pipeline.py b/pipeline.py
+index eeedadf..5aa4bde 100644
+--- a/pipeline.py
++++ b/pipeline.py
+@@ -39,7 +39,7 @@ from tqdm import tqdm
+ import config
+ from src.top_dataset import load_phase2_labeled_trials, primary_drug_name
+ from src.ctgov_client import get_study_by_nctid, flatten_study
+-from src.pubmed_client import collect_drug_discussion
++from src.pubmed_client import collect_drug_discussion, trial_organizations, _date_window
+ from src.filters import run_all_filters
+ from src.merge import build_pubmed_summary_features, merge_trials_with_pubmed
+ 
+@@ -92,6 +92,8 @@ def step2_enrich_with_ctgov(df: pd.DataFrame) -> pd.DataFrame:
+         )
+ 
+     enriched_df = pd.DataFrame(enriched_rows)
++    if enriched_df.empty:
++        return df.iloc[:0].copy()
+     # Carry the TOP label, split, disease/drug/SMILES/criteria text, status
+     # fields forward, preferring the fresh CT.gov values only where TOP had none.
+     merged = df.merge(
+@@ -118,11 +120,18 @@ def step4_collect_pubmed(df: pd.DataFrame) -> dict:
+         )
+ 
+     pubmed_by_trial = {}
+-    with open(config.RAW_PUBMED_PATH, "w") as f:
++    with open(config.RAW_PUBMED_PATH, "w") as f, open(config.RAW_PUBMED_EXCLUDED_PATH, "w") as rejected:
+         for _, row in tqdm(df.iterrows(), total=len(df), desc="pubmed collection"):
+             nct_id = row["nct_id"]
+             drug_name = primary_drug_name(row.get("drugs")) or (row.get("intervention_name") or "").split("|")[0].strip()
+-            records = collect_drug_discussion(drug_name, row["start_date"])
++            if _date_window(row.get("start_date")) is None:
++                pubmed_by_trial[nct_id] = None
++                continue
++            excluded = []
++            records = collect_drug_discussion(
++                drug_name, row.get("start_date"), trial_organizations(row, drug_name), excluded)
++            for rec in excluded:
++                rejected.write(json.dumps({"nct_id": nct_id, **rec}) + "\n")
+             pubmed_by_trial[nct_id] = records
+             for rec in records:
+                 f.write(json.dumps({"nct_id": nct_id, **rec}) + "\n")
+diff --git a/src/ctgov_client.py b/src/ctgov_client.py
+index ce74e80..438aba1 100644
+--- a/src/ctgov_client.py
++++ b/src/ctgov_client.py
+@@ -142,6 +142,10 @@ def flatten_study(study: dict) -> dict:
+         "n_arms": len(_dig(protocol, "armsInterventionsModule", "armGroups", default=[]) or []),
+         "lead_sponsor_name": _dig(protocol, "sponsorCollaboratorsModule", "leadSponsor", "name"),
+         "lead_sponsor_class": _dig(protocol, "sponsorCollaboratorsModule", "leadSponsor", "class"),
++        "industry_collaborators": "|".join(
++            c["name"] for c in collaborators
++            if c.get("class") == "INDUSTRY" and c.get("name")
++        ),
+         "n_collaborators": len(collaborators),
+         "n_primary_outcomes": len(primary_outcomes),
+         "n_secondary_outcomes": len(secondary_outcomes),
+diff --git a/src/merge.py b/src/merge.py
+index 01806b6..1d6b377 100644
+--- a/src/merge.py
++++ b/src/merge.py
+@@ -19,26 +19,34 @@ def build_pubmed_summary_features(pubmed_records_by_trial: dict) -> pd.DataFrame
+     """
+     rows = []
+     for nct_id, records in pubmed_records_by_trial.items():
++        if records is None:
++            rows.append({"nct_id": nct_id, "pubmed_mention_count": pd.NA,
++                         "pubmed_with_abstract_count": pd.NA, "pubmed_pmids": "",
++                         "pubmed_collection_status": "missing_or_invalid_start_date"})
++            continue
+         n_with_abstract = sum(1 for r in records if r.get("abstract"))
+         rows.append(
+             {
+                 "nct_id": nct_id,
++                "pubmed_collection_status": "collected",
+                 "pubmed_mention_count": len(records),
+                 "pubmed_with_abstract_count": n_with_abstract,
+                 "pubmed_pmids": "|".join(r["pmid"] for r in records if r.get("pmid")),
+             }
+         )
+-    return pd.DataFrame(rows)
++    return pd.DataFrame(rows, columns=["nct_id", "pubmed_collection_status",
++                                      "pubmed_mention_count", "pubmed_with_abstract_count", "pubmed_pmids"])
+ 
+ 
+ def merge_trials_with_pubmed(
+     trials_df: pd.DataFrame, pubmed_summary_df: pd.DataFrame
+ ) -> pd.DataFrame:
+     merged = trials_df.merge(pubmed_summary_df, on="nct_id", how="left")
+-    merged["pubmed_mention_count"] = merged["pubmed_mention_count"].fillna(0).astype(int)
++    merged["pubmed_mention_count"] = merged["pubmed_mention_count"].astype("Int64")
+     merged["pubmed_with_abstract_count"] = (
+-        merged["pubmed_with_abstract_count"].fillna(0).astype(int)
++        merged["pubmed_with_abstract_count"].astype("Int64")
+     )
++    merged["pubmed_collection_status"] = merged["pubmed_collection_status"].fillna("not_collected")
+     merged["pubmed_pmids"] = merged["pubmed_pmids"].fillna("")
+     logger.info("Merged trial table with PubMed features: %d rows", len(merged))
+     return merged
+diff --git a/src/pubmed_client.py b/src/pubmed_client.py
+index 5641f25..ccfd185 100644
+--- a/src/pubmed_client.py
++++ b/src/pubmed_client.py
+@@ -8,6 +8,8 @@ but raises the rate limit from 3 req/sec to 10 req/sec. Both are read from
+ environment variables via config.py / .env -- see .env.example.
+ """
+ import logging
++import re
++import unicodedata
+ import time
+ from datetime import datetime, timedelta
+ from typing import List, Optional
+@@ -49,19 +51,25 @@ def _get(endpoint: str, params: dict) -> requests.Response:
+ 
+ def _date_window(before_date: Optional[str]) -> Optional[tuple]:
+     """
+-    Returns (mindate, maxdate) in YYYY/MM/DD, ending at `before_date` (phase 2
+-    start). Returns None when `before_date` is missing/unparseable -- NEVER
++    Returns (mindate, maxdate) in YYYY/MM/DD, ending strictly before `before_date` (phase 2
++    start, using the first day for month/year-only dates). Returns None when `before_date` is missing/unparseable -- NEVER
+     falls back to today's date, since that would silently pull in discussion
+     published during or after the trial (e.g. phase 4 articles) instead of
+     skipping the trial.
+     """
+-    if not before_date:
++    if not isinstance(before_date, str):
++        return None
++    value = before_date.strip()
++    # Use the earliest possible start for partial registry dates.
++    formats = {4: "%Y", 7: "%Y-%m", 10: "%Y-%m-%d"}
++    if not re.fullmatch(r"\d{4}(?:-\d{2}(?:-\d{2})?)?", value):
+         return None
+     try:
+-        end = datetime.strptime(before_date[:10], "%Y-%m-%d")
+-    except ValueError:
++        cutoff = datetime.strptime(value, formats[len(value)])
++        end = cutoff - timedelta(days=1)  # Entrez maxdate is inclusive.
++        start = cutoff - timedelta(days=config.PUBMED_LOOKBACK_DAYS)
++    except (ValueError, OverflowError):
+         return None
+-    start = end - timedelta(days=config.PUBMED_LOOKBACK_DAYS)
+     return start.strftime("%Y/%m/%d"), end.strftime("%Y/%m/%d")
+ 
+ 
+@@ -131,6 +139,13 @@ def fetch_abstracts(pmids: List[str]) -> List[dict]:
+                 "pmid": pmid_el.text if pmid_el is not None else None,
+                 "title": "".join(title_el.itertext()).strip() if title_el is not None else None,
+                 "abstract": abstract_text or None,
++                "affiliations": ["".join(el.itertext()).strip()
++                                 for el in article.findall(".//Affiliation")],
++                "conflict_of_interest": " ".join(
++                    "".join(el.itertext()).strip()
++                    for el in article.findall(".//CoiStatement")),
++                "funding_agencies": ["".join(el.itertext()).strip()
++                                     for el in article.findall(".//Grant/Agency")],
+                 "journal": journal_el.text if journal_el is not None else None,
+                 "pub_year": pub_year_el.text if pub_year_el is not None else None,
+             }
+@@ -138,7 +153,8 @@ def fetch_abstracts(pmids: List[str]) -> List[dict]:
+     return records
+ 
+ 
+-def collect_drug_discussion(drug_name: str, before_date: Optional[str]) -> List[dict]:
++def collect_drug_discussion(drug_name: str, before_date: Optional[str],
++                            organizations=(), excluded_records=None) -> List[dict]:
+     """Full esearch -> efetch round trip for one drug. Batches efetch calls in groups of 200."""
+     pmids = search_pmids(drug_name, before_date)
+     all_records = []
+@@ -146,5 +162,59 @@ def collect_drug_discussion(drug_name: str, before_date: Optional[str]) -> List[
+     for i in range(0, len(pmids), batch_size):
+         batch = pmids[i : i + batch_size]
+         all_records.extend(fetch_abstracts(batch))
+-    return all_records
++    kept = []
++    for record in all_records:
++        matches = organization_matches(record, organizations)
++        if matches:
++            if excluded_records is not None:
++                excluded_records.append({**record, "exclusion_matches": matches})
++        else:
++            record["industry_screening"] = (
++                "no_disclosed_match" if organizations else "no_known_organizations")
++            kept.append(record)
++    return kept
++
++
+ 
++def _normalize(text):
++    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
++    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
++
++
++def organization_matches(record, organizations):
++    """Match disclosed ties, never a company's mention in title/abstract alone.
++
++    Whole-token matching avoids e.g. matching Merck to Merckx. Strip corporate
++    suffixes so registry 'Acme, Inc.' also matches affiliation 'Acme'. Aliases
++    and ownership relationships require a reviewed configuration entry.
++    """
++    fields = {"affiliation": record.get("affiliations", []),
++              "funding": record.get("funding_agencies", []),
++              "conflict_of_interest": [record.get("conflict_of_interest", "")]}
++    matches = []
++    for organization in sorted(set(organizations)):
++        name = _normalize(organization)
++        tokens = name.split()
++        while tokens and tokens[-1] in {"inc", "incorporated", "ltd", "limited",
++                                        "llc", "corp", "corporation", "plc"}:
++            tokens.pop()
++        name = " ".join(tokens)
++        if not name:
++            continue
++        for field, values in fields.items():
++            if any(" " + name + " " in " " + _normalize(v) + " " for v in values):
++                matches.append({"organization": organization, "field": field})
++    return matches
++
++
++def trial_organizations(row, drug_name):
++    """Industry sponsors/collaborators are proxies, supplemented by known makers."""
++    names = list(config.DRUG_MANUFACTURERS.get(drug_name.lower(), []))
++    if row.get("lead_sponsor_class") == "INDUSTRY":
++        sponsor = row.get("lead_sponsor_name")
++        if isinstance(sponsor, str) and sponsor.strip():
++            names.append(sponsor.strip())
++    collaborators = row.get("industry_collaborators")
++    if isinstance(collaborators, str):
++        names.extend(n.strip() for n in collaborators.split("|") if n.strip())
++    return sorted(set(names))
+diff --git a/tests/test_filtering.py b/tests/test_filtering.py
+new file mode 100644
+index 0000000..e231759
+--- /dev/null
++++ b/tests/test_filtering.py
+@@ -0,0 +1,71 @@
++import unittest
++from unittest.mock import patch, Mock
++import pandas as pd
++from src.pubmed_client import (_date_window, organization_matches,
++                               trial_organizations, fetch_abstracts, collect_drug_discussion)
++from src.filters import run_all_filters
++from src.merge import build_pubmed_summary_features, merge_trials_with_pubmed
++from src.ctgov_client import flatten_study
++
++
++class FilteringTests(unittest.TestCase):
++    def test_dates(self):
++        for value, expected in [('2020-03-01', '2020/02/29'),
++                                ('2020-03', '2020/02/29'), ('2020', '2019/12/31')]:
++            self.assertEqual(_date_window(value)[1], expected)
++        for value in [None, float('nan'), '', 'bad', '2020-02-30']:
++            self.assertIsNone(_date_window(value))
++
++    def test_disclosed_ties(self):
++        for field in ['affiliations', 'funding_agencies']:
++            self.assertTrue(organization_matches({field: ['ACME, research division']}, ['Acme Inc.']))
++        self.assertTrue(organization_matches({'conflict_of_interest': 'Consultant for Acme.'}, ['Acme']))
++        self.assertFalse(organization_matches({'affiliations': ['Merckx University']}, ['Merck']))
++        self.assertFalse(organization_matches({'title': 'Acme trial', 'abstract': 'Acme drug'}, ['Acme']))
++
++    def test_xml_and_collection(self):
++        xml = b'''<PubmedArticleSet><PubmedArticle><MedlineCitation><PMID>1</PMID>
++        <Article><ArticleTitle>Study</ArticleTitle><AuthorList><Author><AffiliationInfo>
++        <Affiliation>Acme <b>Research</b></Affiliation></AffiliationInfo></Author></AuthorList>
++        <GrantList><Grant><Agency>Acme</Agency></Grant></GrantList></Article>
++        <CoiStatement>Paid by Acme</CoiStatement></MedlineCitation></PubmedArticle></PubmedArticleSet>'''
++        with patch('src.pubmed_client._get', return_value=Mock(content=xml)), patch('src.pubmed_client.time.sleep'):
++            records = fetch_abstracts(['1'])
++        self.assertEqual(records[0]['affiliations'], ['Acme Research'])
++        self.assertEqual(records[0]['funding_agencies'], ['Acme'])
++        excluded = []
++        with patch('src.pubmed_client.search_pmids', return_value=['1', '2']), patch('src.pubmed_client.fetch_abstracts', return_value=records + [{'pmid':'2'}]):
++            kept = collect_drug_discussion('drug', '2020', ['Acme'], excluded)
++        self.assertEqual([r['pmid'] for r in kept], ['2'])
++        self.assertEqual(len(excluded[0]['exclusion_matches']), 3)
++
++    def test_missing_dates_retained_with_unknown_counts(self):
++        trials = pd.DataFrame([dict(nct_id='A', label=1, start_date=None, condition='X', intervention_name='Y'),
++                               dict(nct_id='B', label=0, start_date='2020', condition='X', intervention_name='Y')])
++        trials = run_all_filters(trials)
++        self.assertEqual(len(trials), 2)
++        result = merge_trials_with_pubmed(trials, build_pubmed_summary_features({'A': None, 'B': []}))
++        self.assertTrue(pd.isna(result.iloc[0].pubmed_mention_count))
++        self.assertEqual(result.iloc[1].pubmed_mention_count, 0)
++        self.assertEqual(result.iloc[0].pubmed_collection_status, 'missing_or_invalid_start_date')
++        empty = merge_trials_with_pubmed(trials, build_pubmed_summary_features({}))
++        self.assertTrue(empty.pubmed_mention_count.isna().all())
++
++    def test_industry_collaborators_and_aliases(self):
++        row = flatten_study({'protocolSection': {'sponsorCollaboratorsModule': {
++            'leadSponsor': {'name': 'University', 'class': 'OTHER'},
++            'collaborators': [{'name': 'Acme', 'class': 'INDUSTRY'}, {'name': 'Hospital', 'class': 'OTHER'}]}}})
++        with patch('config.DRUG_MANUFACTURERS', {'drug': ['Maker', 'Former Maker']}):
++            self.assertEqual(trial_organizations(row, 'Drug'), ['Acme', 'Former Maker', 'Maker'])
++
++    def test_pipeline_skips_search_for_missing_date(self):
++        import tempfile
++        from pathlib import Path
++        import pipeline
++        with tempfile.TemporaryDirectory() as directory, patch('config.RAW_PUBMED_PATH', Path(directory)/'kept'), patch('config.RAW_PUBMED_EXCLUDED_PATH', Path(directory)/'excluded'), patch('pipeline.collect_drug_discussion') as collect:
++            result = pipeline.step4_collect_pubmed(pd.DataFrame([{'nct_id': 'A', 'drugs': "['drug']", 'start_date': None}]))
++        self.assertEqual(result, {'A': None})
++        collect.assert_not_called()
++
++if __name__ == '__main__':
++    unittest.main()
