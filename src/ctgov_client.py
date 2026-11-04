@@ -142,6 +142,10 @@ def flatten_study(study: dict) -> dict:
         "n_arms": len(_dig(protocol, "armsInterventionsModule", "armGroups", default=[]) or []),
         "lead_sponsor_name": _dig(protocol, "sponsorCollaboratorsModule", "leadSponsor", "name"),
         "lead_sponsor_class": _dig(protocol, "sponsorCollaboratorsModule", "leadSponsor", "class"),
+        "industry_collaborators": "|".join(
+            c["name"] for c in collaborators
+            if c.get("class") == "INDUSTRY" and c.get("name")
+        ),
         "n_collaborators": len(collaborators),
         "n_primary_outcomes": len(primary_outcomes),
         "n_secondary_outcomes": len(secondary_outcomes),
@@ -158,3 +162,4 @@ def flatten_study(study: dict) -> dict:
         "fdaaa801_violation": _dig(protocol, "oversightModule", "fdaaa801Violation"),
         "has_results": study.get("hasResults", False),
     }
+
