@@ -30,7 +30,6 @@ CTGOV_REQUEST_DELAY_SEC = 0.2  # be polite; no published hard rate limit but avo
 REQUIRED_NON_NULL_FIELDS = [
     "nct_id",
     "label",
-    "start_date",
     "condition",
     "intervention_name",
 ]
@@ -42,3 +41,9 @@ ENTREZ_BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 ENTREZ_REQUEST_DELAY_SEC = 0.11 if NCBI_API_KEY else 0.35  # 10/sec with key, 3/sec without
 PUBMED_RETMAX_PER_DRUG = 200          # cap per intervention to keep volume sane
 PUBMED_LOOKBACK_DAYS = 3 * 365        # only discussion in the N days before phase 2 start
+
+
+# Reviewed manufacturer names/aliases keyed by lower-case drug name. Include
+# subsidiaries and historical names where known; sponsors are not always makers.
+DRUG_MANUFACTURERS = {}
+RAW_PUBMED_EXCLUDED_PATH = DATA_RAW_DIR / "pubmed_excluded.jsonl"

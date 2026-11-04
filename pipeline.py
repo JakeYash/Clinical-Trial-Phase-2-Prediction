@@ -39,7 +39,7 @@ from tqdm import tqdm
 import config
 from src.top_dataset import load_phase2_labeled_trials, primary_drug_name
 from src.ctgov_client import get_study_by_nctid, flatten_study
-from src.pubmed_client import collect_drug_discussion
+from src.pubmed_client import collect_drug_discussion, trial_organizations, _date_window
 from src.filters import run_all_filters
 from src.merge import build_pubmed_summary_features, merge_trials_with_pubmed
 
@@ -92,6 +92,8 @@ def step2_enrich_with_ctgov(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     enriched_df = pd.DataFrame(enriched_rows)
+    if enriched_df.empty:
+        return df.iloc[:0].copy()
     # Carry the TOP label, split, disease/drug/SMILES/criteria text, status
     # fields forward, preferring the fresh CT.gov values only where TOP had none.
     merged = df.merge(
@@ -118,11 +120,18 @@ def step4_collect_pubmed(df: pd.DataFrame) -> dict:
         )
 
     pubmed_by_trial = {}
-    with open(config.RAW_PUBMED_PATH, "w") as f:
+    with open(config.RAW_PUBMED_PATH, "w") as f, open(config.RAW_PUBMED_EXCLUDED_PATH, "w") as rejected:
         for _, row in tqdm(df.iterrows(), total=len(df), desc="pubmed collection"):
             nct_id = row["nct_id"]
             drug_name = primary_drug_name(row.get("drugs")) or (row.get("intervention_name") or "").split("|")[0].strip()
-            records = collect_drug_discussion(drug_name, row["start_date"])
+            if _date_window(row.get("start_date")) is None:
+                pubmed_by_trial[nct_id] = None
+                continue
+            excluded = []
+            records = collect_drug_discussion(
+                drug_name, row.get("start_date"), trial_organizations(row, drug_name), excluded)
+            for rec in excluded:
+                rejected.write(json.dumps({"nct_id": nct_id, **rec}) + "\n")
             pubmed_by_trial[nct_id] = records
             for rec in records:
                 f.write(json.dumps({"nct_id": nct_id, **rec}) + "\n")
@@ -172,3 +181,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
