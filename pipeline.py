@@ -33,6 +33,7 @@ import argparse
 import json
 import logging
 
+
 import pandas as pd
 from tqdm import tqdm
 
@@ -122,7 +123,11 @@ def step4_collect_pubmed(df: pd.DataFrame) -> dict:
         for _, row in tqdm(df.iterrows(), total=len(df), desc="pubmed collection"):
             nct_id = row["nct_id"]
             drug_name = primary_drug_name(row.get("drugs")) or (row.get("intervention_name") or "").split("|")[0].strip()
-            records = collect_drug_discussion(drug_name, row["start_date"])
+            records = collect_drug_discussion(
+                drug_name,
+                row["start_date"],
+                row.get("diseases"),
+            )
             pubmed_by_trial[nct_id] = records
             for rec in records:
                 f.write(json.dumps({"nct_id": nct_id, **rec}) + "\n")
