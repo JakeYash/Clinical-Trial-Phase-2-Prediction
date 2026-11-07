@@ -9,6 +9,7 @@ environment variables via config.py / .env -- see .env.example.
 """
 import logging
 import time
+import ast
 from datetime import datetime, timedelta
 from typing import List, Optional
 from xml.etree import ElementTree as ET
@@ -65,10 +66,40 @@ def _date_window(before_date: Optional[str]) -> Optional[tuple]:
     return start.strftime("%Y/%m/%d"), end.strftime("%Y/%m/%d")
 
 
-def search_pmids(drug_name: str, before_date: Optional[str]) -> List[str]:
-    """esearch: returns PMIDs mentioning `drug_name`, dated before the trial's start."""
+def parse_diseases(value):
+    """Convert a disease name or list-like string into a list."""
+    if value is None:
+        return []
+
+    if isinstance(value, (list, tuple)):
+        return [str(d).strip() for d in value if str(d).strip()]
+
+    if not isinstance(value, str) or not value.strip():
+        return []
+
+    value = value.strip()
+
+    if value.startswith("["):
+        try:
+            parsed = ast.literal_eval(value)
+            if isinstance(parsed, (list, tuple)):
+                return [str(d).strip() for d in parsed if str(d).strip()]
+        except (ValueError, SyntaxError):
+            logger.warning("Could not parse diseases value: %r -- falling back to drug-only search", value)
+        return []
+
+    return [value]
+
+
+def search_pmids(
+    drug_name: str,
+    before_date: Optional[str],
+    disease: Optional[str] = None,
+) -> List[str]:
+    """Prioritize disease-specific articles, then add broader drug articles."""
     if not drug_name:
         return []
+
     window = _date_window(before_date)
     if window is None:
         logger.warning(
@@ -76,24 +107,59 @@ def search_pmids(drug_name: str, before_date: Optional[str]) -> List[str]:
             drug_name,
         )
         return []
-    mindate, maxdate = window
-    params = {
-        "db": "pubmed",
-        "term": drug_name,
-        "retmax": config.PUBMED_RETMAX_PER_DRUG,
-        "retmode": "json",
-        "datetype": "pdat",
-        "mindate": mindate,
-        "maxdate": maxdate,
-    }
-    resp = _get("esearch.fcgi", params)
-    time.sleep(config.ENTREZ_REQUEST_DELAY_SEC)
-    try:
-        return resp.json().get("esearchresult", {}).get("idlist", [])
-    except ValueError:
-        logger.warning("Non-JSON esearch response for drug=%s", drug_name)
-        return []
 
+    mindate, maxdate = window
+    max_articles = config.PUBMED_RETMAX_PER_DRUG
+
+    def run_search(query):
+        params = {
+            "db": "pubmed",
+            "term": f"({query})",
+            "retmax": max_articles,
+            "retmode": "json",
+            "datetype": "pdat",
+            "mindate": mindate,
+            "maxdate": maxdate,
+        }
+        resp = _get("esearch.fcgi", params)
+        time.sleep(config.ENTREZ_REQUEST_DELAY_SEC)
+
+        try:
+            return resp.json().get("esearchresult", {}).get("idlist", [])
+        except ValueError:
+            logger.warning("Non-JSON esearch response for query=%s", query)
+            return []
+
+    # Search for articles mentioning the drug
+    drug_query = f'"{drug_name}"[Title/Abstract]'
+
+    # Convert disease information into a list
+    diseases = parse_diseases(disease)
+
+    # If no disease is provided, use drug-only search
+    if not diseases:
+        return run_search(drug_query)
+
+    # Stage 1: Drug + disease(s)
+    disease_terms = [
+        f'"{d}"[Title/Abstract]' for d in diseases
+    ]
+
+    disease_query = (
+        f'{drug_query} AND ({" OR ".join(disease_terms)})'
+    )
+
+    # Do more general search only if necessary	
+    specific_pmids = run_search(disease_query)
+    if len(specific_pmids) >= max_articles:
+        return specific_pmids[:max_articles]
+    general_pmids = run_search(drug_query)
+
+
+    # Prioritize specific articles and remove duplicates
+    combined_pmids = list(dict.fromkeys(specific_pmids + general_pmids))
+
+    return combined_pmids[:max_articles]
 
 def fetch_abstracts(pmids: List[str]) -> List[dict]:
     """efetch: returns [{pmid, title, abstract, journal, pub_date}, ...] for given PMIDs."""
@@ -138,12 +204,20 @@ def fetch_abstracts(pmids: List[str]) -> List[dict]:
     return records
 
 
-def collect_drug_discussion(drug_name: str, before_date: Optional[str]) -> List[dict]:
-    """Full esearch -> efetch round trip for one drug. Batches efetch calls in groups of 200."""
-    pmids = search_pmids(drug_name, before_date)
+
+def collect_drug_discussion(
+    drug_name: str,
+    before_date: Optional[str],
+    disease: Optional[str] = None,
+) -> List[dict]:
+    """Retrieve PubMed articles for a drug, optionally using disease context."""
+    pmids = search_pmids(drug_name, before_date, disease)
+
     all_records = []
     batch_size = 200
+
     for i in range(0, len(pmids), batch_size):
         batch = pmids[i : i + batch_size]
         all_records.extend(fetch_abstracts(batch))
+
     return all_records

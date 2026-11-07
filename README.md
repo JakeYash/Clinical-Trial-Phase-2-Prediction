@@ -40,7 +40,8 @@ round trips — roughly two hours. Use `--max-trials` for a first test, or
    essential field.
 4. **Collect PubMed discussion** (`src/pubmed_client.py`) — for each trial's
    primary drug (skipping placebo/comparator arms), pulls titles/abstracts
-   dated before that trial's `start_date`.
+   dated before that trial's `start_date`. Uses a two-stage search: disease-specific
+   articles (drug + indication) are prioritized, then backfilled with broader drug-only results.
 5. **Merge** (`src/merge.py`) — joins PubMed summary stats onto the trial
    table, writes `data/processed/trials_dataset.csv`.
 
@@ -72,10 +73,17 @@ Raw abstract text for sentiment scoring lives in
 pub_year}`), keyed back to `trials_dataset.csv` by `nct_id`.
 
 
+## Tests
+
+```bash
+python3 -m unittest discover -s tests
+```
+
 ## Possible Issues / Future Additions
 
 1. **PubMed drug-name matching is free-text search**, not entity-linked —
-   This just means the data we pull is based on text in the article title instead of a field for the article.
+   The search now uses disease context to prioritize relevant articles, but matching
+   is still text-based rather than using a controlled vocabulary (e.g. MeSH terms).
 2. **Maybe add other forms of public sentiment**
    We could try looking at more informal sources like reddit maybe?
 
