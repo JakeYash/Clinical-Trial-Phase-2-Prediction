@@ -148,10 +148,12 @@ def search_pmids(
         f'{drug_query} AND ({" OR ".join(disease_terms)})'
     )
 
+    # Do more general search only if necessary	
     specific_pmids = run_search(disease_query)
-
-    # Stage 2: Broader drug research
+    if len(specific_pmids) >= max_articles:
+        return specific_pmids[:max_articles]
     general_pmids = run_search(drug_query)
+
 
     # Prioritize specific articles and remove duplicates
     combined_pmids = list(dict.fromkeys(specific_pmids + general_pmids))
