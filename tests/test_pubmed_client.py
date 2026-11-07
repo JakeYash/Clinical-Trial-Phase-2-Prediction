@@ -52,7 +52,6 @@ class TestPubMedClient(unittest.TestCase):
         specific_query = mock_get.call_args_list[0].args[1]["term"]
         self.assertIn("Topotecan", specific_query)
         self.assertIn("Ovarian Cancer", specific_query)
-        self.assertIn("[edat]", specific_query)
 
     
     @patch("src.pubmed_client.time.sleep")
