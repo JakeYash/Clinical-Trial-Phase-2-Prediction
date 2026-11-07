@@ -113,7 +113,7 @@ def search_pmids(
     def run_search(query):
         params = {
             "db": "pubmed",
-            "term": f"({query}) AND ({mindate}[edat] : {maxdate}[edat])",
+            "term": f"({query})",
             "retmax": max_articles,
             "retmode": "json",
             "datetype": "pdat",
