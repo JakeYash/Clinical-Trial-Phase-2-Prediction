@@ -40,7 +40,7 @@ from tqdm import tqdm
 import config
 from src.top_dataset import load_phase2_labeled_trials, primary_drug_name
 from src.ctgov_client import get_study_by_nctid, flatten_study
-from src.pubmed_client import collect_drug_discussion
+from src.pubmed_client import collect_drug_discussion, trial_organizations, _date_window
 from src.filters import run_all_filters
 from src.merge import build_pubmed_summary_features, merge_trials_with_pubmed
 
@@ -119,18 +119,26 @@ def step4_collect_pubmed(df: pd.DataFrame) -> dict:
         )
 
     pubmed_by_trial = {}
-    with open(config.RAW_PUBMED_PATH, "w") as f:
+    with open(config.RAW_PUBMED_PATH, "w") as f, open(config.RAW_PUBMED_EXCLUDED_PATH, "w") as rejected:
         for _, row in tqdm(df.iterrows(), total=len(df), desc="pubmed collection"):
             nct_id = row["nct_id"]
             drug_name = primary_drug_name(row.get("drugs")) or (row.get("intervention_name") or "").split("|")[0].strip()
+            if _date_window(row.get("start_date")) is None:
+                pubmed_by_trial[nct_id] = None
+                continue
+            excluded = []
             records = collect_drug_discussion(
                 drug_name,
-                row["start_date"],
+                row.get("start_date"),
                 row.get("diseases"),
+                trial_organizations(row, drug_name),
+                excluded,
             )
             pubmed_by_trial[nct_id] = records
             for rec in records:
                 f.write(json.dumps({"nct_id": nct_id, **rec}) + "\n")
+            for rec in excluded:
+                rejected.write(json.dumps({"nct_id": nct_id, **rec}) + "\n")
 
     logger.info("PubMed abstracts -> %s", config.RAW_PUBMED_PATH)
     return pubmed_by_trial
