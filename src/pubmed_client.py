@@ -85,7 +85,8 @@ def parse_diseases(value):
             if isinstance(parsed, (list, tuple)):
                 return [str(d).strip() for d in parsed if str(d).strip()]
         except (ValueError, SyntaxError):
-            return []
+            logger.warning("Could not parse diseases value: %r -- falling back to drug-only search", value)
+        return []
 
     return [value]
 
