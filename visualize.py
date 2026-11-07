@@ -95,6 +95,12 @@ def print_summary(df):
         if len(valid) > 0:
             summary["success_rate_percent"] = round(valid.mean() * 100, 2)
 
+    if "pubmed_collection_status" in df.columns:
+        status_counts = df["pubmed_collection_status"].value_counts()
+        summary["pubmed_collected"] = int(status_counts.get("collected", 0))
+        summary["pubmed_missing_start_date"] = int(status_counts.get("missing_or_invalid_start_date", 0))
+        summary["pubmed_not_collected"] = int(status_counts.get("not_collected", 0))
+
     if "pubmed_mention_count" in df.columns:
         counts = nonnegative_values(df, "pubmed_mention_count")
         if len(counts) > 0:
@@ -160,7 +166,8 @@ def print_filtering_stats(df):
 
     print("\n========== FILTERING CHECK ==========")
     print("Trials in CT.gov enriched file:", total)
-    print("Enriched trials missing start_date:", missing_dates)
+    print("Enriched trials missing start_date:", missing_dates,
+          "(retained in dataset; PubMed search skipped for these)")
     if FILTERED_PATH.exists():
         filtered_count = len(pd.read_csv(FILTERED_PATH, usecols=["nct_id"]))
         print("Trials after filtering:", filtered_count)
@@ -197,7 +204,7 @@ def plot_missingness(df):
         "start_date", "primary_completion_date", "completion_date",
         "enrollment_count", "number_of_arms", "lead_sponsor_name",
         "condition", "drugs", "pubmed_mention_count",
-        "pubmed_with_abstract_count", "why_stopped"
+        "pubmed_with_abstract_count", "pubmed_collection_status", "why_stopped"
     ]
     columns = existing_columns(df, columns)
     if not columns:
