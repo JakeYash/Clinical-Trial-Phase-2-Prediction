@@ -15,6 +15,10 @@ DATA_PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 DATA_RAW_DIR.mkdir(parents=True, exist_ok=True)
 DATA_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
+LOGS_DIR = ROOT_DIR / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+LOG_PATH = LOGS_DIR / "pipeline.log"
+
 TOP_CACHE_DIR = DATA_RAW_DIR / "top_benchmark"
 RAW_ENRICHED_TRIALS_PATH = DATA_RAW_DIR / "phase2_trials_enriched.jsonl"
 RAW_PUBMED_PATH = DATA_RAW_DIR / "pubmed_abstracts.jsonl"
@@ -38,6 +42,7 @@ REQUIRED_NON_NULL_FIELDS = [
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "")
 NCBI_API_KEY = os.getenv("NCBI_API_KEY", "")
 ENTREZ_BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+PUBCHEM_BASE_URL = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
 ENTREZ_REQUEST_DELAY_SEC = 0.11 if NCBI_API_KEY else 0.35  # 10/sec with key, 3/sec without
 PUBMED_RETMAX_PER_DRUG = 200          # cap per intervention to keep volume sane
 PUBMED_LOOKBACK_DAYS = 3 * 365        # only discussion in the N days before phase 2 start

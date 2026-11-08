@@ -40,10 +40,13 @@ round trips — roughly two hours. Use `--max-trials` for a first test, or
    essential field.
 4. **Collect PubMed discussion** (`src/pubmed_client.py`) — for each trial's
    primary drug (skipping placebo/comparator arms), pulls titles/abstracts
-   dated before that trial's `start_date`. Uses a two-stage search: disease-specific
-   articles (drug + indication) are prioritized, then backfilled with broader drug-only results.
-   Articles with disclosed ties to the trial's industry sponsor or known manufacturers
-   are filtered out and written to `data/raw/pubmed_excluded.jsonl` for transparency.
+   dated before that trial's `start_date`. Drug names are resolved to PubChem's
+   preferred synonym (catching brand names and alternate spellings); disease names
+   are resolved to MeSH terms (falling back to text search if no entry is found).
+   Uses a two-stage search: disease-specific articles (drug + indication) are
+   prioritized, then backfilled with broader drug-only results. Articles with
+   disclosed ties to the trial's industry sponsor or known manufacturers are
+   filtered out and written to `data/raw/pubmed_excluded.jsonl` for transparency.
 5. **Merge** (`src/merge.py`) — joins PubMed summary stats onto the trial
    table, writes `data/processed/trials_dataset.csv`.
 
@@ -84,9 +87,12 @@ python3 -m unittest discover -s tests
 
 ## Possible Issues / Future Additions
 
-1. **PubMed drug-name matching is free-text search**, not entity-linked —
-   The search uses disease context to prioritize relevant articles, but matching
-   is still text-based rather than using a controlled vocabulary (e.g. MeSH terms).
+1. **Entity resolution has coverage gaps** — Drug names are resolved via
+   PubChem (catches brand names and alternate spellings) and disease names via
+   MeSH, but both fall back to text search when no entry is found. Very new
+   drugs may not yet be in PubChem; rare diseases may have no MeSH term.
+   PubChem's preferred synonym is the first entry in its synonym list, which
+   may not be the most common name in the literature.
 2. **Manufacturer filtering strength depends on `DRUG_MANUFACTURERS` config** —
    By default only CT.gov's registered industry sponsors/collaborators are used to
    screen articles. Subsidiaries and historical company names won't be caught unless
@@ -95,6 +101,4 @@ python3 -m unittest discover -s tests
    We could try looking at more informal sources like reddit maybe?
 
 ## Next Steps
-1. **Visualize the data**
-   Just a little bit to actually parse those csvs and get an idea of the shape of our data. I would like if this was done in a separate py file. Also, getting the overall stats on the dataset is a must (number of points for example). 
-3. **Start thinking about how we are going to analyze this data for the impact of the outside source articles**
+1. **Start thinking about how we are going to analyze this data for the impact of the outside source articles**

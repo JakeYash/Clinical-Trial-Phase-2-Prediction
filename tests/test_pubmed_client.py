@@ -25,9 +25,11 @@ class TestPubMedClient(unittest.TestCase):
         self.assertEqual(result, [])
 
     
+    @patch("src.pubmed_client.resolve_mesh_term", return_value=None)
+    @patch("src.pubmed_client.resolve_pubchem_name", return_value=None)
     @patch("src.pubmed_client.time.sleep")
     @patch("src.pubmed_client._get")
-    def test_two_stage_search(self, mock_get, mock_sleep):
+    def test_two_stage_search(self, mock_get, mock_sleep, mock_pubchem, mock_mesh):
         specific = Mock()
         specific.json.return_value = {
             "esearchresult": {"idlist": ["101", "102"]}
@@ -53,10 +55,12 @@ class TestPubMedClient(unittest.TestCase):
         self.assertIn("Topotecan", specific_query)
         self.assertIn("Ovarian Cancer", specific_query)
 
-    
+
+    @patch("src.pubmed_client.resolve_mesh_term", return_value=None)
+    @patch("src.pubmed_client.resolve_pubchem_name", return_value=None)
     @patch("src.pubmed_client.time.sleep")
     @patch("src.pubmed_client._get")
-    def test_fallback_to_drug_only(self, mock_get, mock_sleep):
+    def test_fallback_to_drug_only(self, mock_get, mock_sleep, mock_pubchem, mock_mesh):
         specific = Mock()
         specific.json.return_value = {
             "esearchresult": {"idlist": []}

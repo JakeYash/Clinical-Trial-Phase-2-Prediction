@@ -13,6 +13,7 @@ import time
 import ast
 import unicodedata
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import List, Optional
 from xml.etree import ElementTree as ET
 
@@ -22,6 +23,23 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import config
 
 logger = logging.getLogger(__name__)
+
+_entity_stats = {
+    "drug_resolved": 0,
+    "drug_text_fallback": 0,
+    "disease_resolved": 0,
+    "disease_text_fallback": 0,
+}
+
+
+def get_entity_resolution_stats() -> dict:
+    return dict(_entity_stats)
+
+
+def reset_entity_resolution_stats() -> None:
+    for key in _entity_stats:
+        _entity_stats[key] = 0
+
 
 if not config.NCBI_EMAIL:
     logger.warning(
@@ -99,6 +117,63 @@ def parse_diseases(value):
     return [value]
 
 
+@lru_cache(maxsize=512)
+def resolve_mesh_term(disease_name: str) -> Optional[str]:
+    """Return the preferred MeSH term for a disease name, or None on failure.
+
+    Cached so the same disease across many trials only hits the API once.
+    """
+    try:
+        resp = _get("esearch.fcgi", {"db": "mesh", "term": disease_name, "retmax": 1, "retmode": "json"})
+        time.sleep(config.ENTREZ_REQUEST_DELAY_SEC)
+        ids = resp.json().get("esearchresult", {}).get("idlist", [])
+        if not ids:
+            logger.debug("No MeSH entry found for disease=%r -- using text search", disease_name)
+            return None
+        summary = _get("esummary.fcgi", {"db": "mesh", "id": ids[0], "retmode": "json"})
+        time.sleep(config.ENTREZ_REQUEST_DELAY_SEC)
+        terms = summary.json().get("result", {}).get(ids[0], {}).get("ds_meshterms", [])
+        if terms:
+            logger.debug("Resolved disease %r -> MeSH %r", disease_name, terms[0])
+            return terms[0]
+        return None
+    except Exception:
+        logger.warning("MeSH lookup failed for disease=%r -- falling back to text search", disease_name)
+        return None
+
+
+@lru_cache(maxsize=512)
+def resolve_pubchem_name(drug_name: str) -> Optional[str]:
+    """Return PubChem's preferred IUPAC/synonym name for a drug, or None on failure.
+
+    Uses PubChem's name-to-CID lookup then fetches the preferred synonym, which
+    catches brand names, INNs, and alternate spellings. Cached per drug name.
+    """
+    try:
+        url = f"{config.PUBCHEM_BASE_URL}/compound/name/{requests.utils.quote(drug_name)}/property/IUPACName/JSON"
+        resp = requests.get(url, timeout=15)
+        if resp.status_code == 404:
+            logger.debug("No PubChem entry for drug=%r -- using original name", drug_name)
+            return None
+        resp.raise_for_status()
+        cid = resp.json()["PropertyTable"]["Properties"][0].get("CID")
+        if not cid:
+            return None
+
+        # Fetch synonyms and use the first one (PubChem orders by prevalence).
+        syn_url = f"{config.PUBCHEM_BASE_URL}/compound/cid/{cid}/synonyms/JSON"
+        syn_resp = requests.get(syn_url, timeout=15)
+        syn_resp.raise_for_status()
+        synonyms = syn_resp.json().get("InformationList", {}).get("Information", [{}])[0].get("Synonym", [])
+        preferred = synonyms[0] if synonyms else None
+        if preferred:
+            logger.debug("Resolved drug %r -> PubChem preferred name %r", drug_name, preferred)
+        return preferred
+    except Exception:
+        logger.warning("PubChem lookup failed for drug=%r -- using original name", drug_name)
+        return None
+
+
 def search_pmids(
     drug_name: str,
     before_date: Optional[str],
@@ -138,8 +213,16 @@ def search_pmids(
             logger.warning("Non-JSON esearch response for query=%s", query)
             return []
 
-    # Search for articles mentioning the drug
-    drug_query = f'"{drug_name}"[Title/Abstract]'
+    # Resolve drug to PubChem preferred name; fall back to original if lookup fails
+    resolved_drug = resolve_pubchem_name(drug_name)
+    if resolved_drug:
+        logger.info("Drug %r resolved via PubChem -> %r", drug_name, resolved_drug)
+        _entity_stats["drug_resolved"] += 1
+    else:
+        logger.info("Drug %r not found in PubChem -- using text search", drug_name)
+        _entity_stats["drug_text_fallback"] += 1
+        resolved_drug = drug_name
+    drug_query = f'"{resolved_drug}"[Title/Abstract]'
 
     # Convert disease information into a list
     diseases = parse_diseases(disease)
@@ -148,10 +231,18 @@ def search_pmids(
     if not diseases:
         return run_search(drug_query)
 
-    # Stage 1: Drug + disease(s)
-    disease_terms = [
-        f'"{d}"[Title/Abstract]' for d in diseases
-    ]
+    # Stage 1: Drug + disease(s) — use MeSH term if available, else text search
+    disease_terms = []
+    for d in diseases:
+        mesh = resolve_mesh_term(d)
+        if mesh:
+            logger.info("Disease %r resolved via MeSH -> %r", d, mesh)
+            _entity_stats["disease_resolved"] += 1
+            disease_terms.append(f'"{mesh}"[MeSH Terms]')
+        else:
+            logger.info("Disease %r not found in MeSH -- using text search", d)
+            _entity_stats["disease_text_fallback"] += 1
+            disease_terms.append(f'"{d}"[Title/Abstract]')
 
     disease_query = (
         f'{drug_query} AND ({" OR ".join(disease_terms)})'

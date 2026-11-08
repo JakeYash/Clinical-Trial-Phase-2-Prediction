@@ -40,11 +40,16 @@ from tqdm import tqdm
 import config
 from src.top_dataset import load_phase2_labeled_trials, primary_drug_name
 from src.ctgov_client import get_study_by_nctid, flatten_study
-from src.pubmed_client import collect_drug_discussion, trial_organizations, _date_window
+from src.pubmed_client import collect_drug_discussion, trial_organizations, _date_window, get_entity_resolution_stats
 from src.filters import run_all_filters
 from src.merge import build_pubmed_summary_features, merge_trials_with_pubmed
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+_log_fmt = "%(asctime)s [%(levelname)s] %(message)s"
+logging.basicConfig(level=logging.WARNING, format=_log_fmt)  # terminal: warnings+ only
+_file_handler = logging.FileHandler(config.LOG_PATH, mode="w", encoding="utf-8")
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(logging.Formatter(_log_fmt))
+logging.getLogger().addHandler(_file_handler)
 logger = logging.getLogger("pipeline")
 
 
@@ -141,6 +146,19 @@ def step4_collect_pubmed(df: pd.DataFrame) -> dict:
                 rejected.write(json.dumps({"nct_id": nct_id, **rec}) + "\n")
 
     logger.info("PubMed abstracts -> %s", config.RAW_PUBMED_PATH)
+
+    stats = get_entity_resolution_stats()
+    drug_total = stats["drug_resolved"] + stats["drug_text_fallback"]
+    disease_total = stats["disease_resolved"] + stats["disease_text_fallback"]
+    print(
+        f"\nEntity resolution summary (unique lookups, cached across trials):\n"
+        f"  Drugs   : {stats['drug_resolved']}/{drug_total} resolved via PubChem"
+        f", {stats['drug_text_fallback']}/{drug_total} fell back to text search\n"
+        f"  Diseases: {stats['disease_resolved']}/{disease_total} resolved via MeSH"
+        f", {stats['disease_text_fallback']}/{disease_total} fell back to text search\n"
+        f"  Full details -> {config.LOG_PATH}"
+    )
+
     return pubmed_by_trial
 
 
