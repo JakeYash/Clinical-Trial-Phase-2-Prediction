@@ -14,7 +14,7 @@ The dataset contains different types of information, including:
 - Sponsor information
 - Number of countries
 - PubMed article counts
-The current pipeline picks up the PubMed articles, and the article counts. Sentiment scores have not yet been incorporated.
+The collection pipeline saves PubMed articles and article counts. Run the sentiment scorer described in the README to generate trial-level sentiment features.
 
 ## Data Preparation
 Only information available prior to the trial commencing should be used for prediction. Any columns which would reveal information obtained during or after the trial must be excluded to prevent data leakage.

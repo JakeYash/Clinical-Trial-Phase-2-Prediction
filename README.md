@@ -2,8 +2,7 @@
 
 Collects a public, pre-labeled phase 2 clinical trial dataset (12,494 trials,
 from TrialBench) and enriches it with pre-trial PubMed discussion of each
-drug. **This pipeline only collects and cleans data — no sentiment scoring
-or modeling is performed here.**
+drug. Run sentiment scoring after collecting the data.
 
 ## Setup
 
@@ -78,6 +77,38 @@ Raw abstract text for sentiment scoring lives in
 `data/raw/pubmed_abstracts.jsonl` (`{nct_id, pmid, title, abstract, journal,
 pub_year}`), keyed back to `trials_dataset.csv` by `nct_id`.
 
+
+## Score PubMed sentiment
+
+Run the scorer against the matching outputs from a collection run:
+
+```bash
+pip install -r requirements-sentiment.txt
+python3 score_sentiment.py
+```
+
+The scorer uses the [DeBERTa V3 zero-shot classifier](https://huggingface.co/MoritzLaurer/deberta-v3-base-zeroshot-v1.1-all-33)
+with a pinned checkpoint. The first run downloads the model (roughly 370 MB),
+then inference runs locally on CPU. Use `--articles` and `--trials` to select a
+different pair of saved inputs, and `--output-dir` to choose where results go.
+
+Each retained PubMed article is scored using its title and abstract together,
+or whichever field is available. For long articles, the scorer evaluates every
+token chunk and averages the chunk scores by token count. This English model
+provides zero-shot estimates of scientific tone. Its accuracy on this
+project's PubMed corpus has yet to be measured against human labels.
+
+The scorer writes two files to `data/processed/`:
+
+- `pubmed_article_sentiment.jsonl` contains the top sentiment label, all three
+  class scores, and a polarity score (positive minus negative, from −1 to 1)
+  for each scored trial–PMID pair.
+- `pubmed_sentiment_features.csv` contains one row per `nct_id`. Join it to
+  `trials_dataset.csv` for the next feature engineering step. The
+  `pubmed_sentiment_*` columns contain the scored article count, mean polarity,
+  mean class scores, and counts by top label. Trials without scorable text
+  have zero counts and blank means. Use `pubmed_collection_status` from the
+  trial table to distinguish uncollected trials from collected trials.
 
 ## Tests
 
