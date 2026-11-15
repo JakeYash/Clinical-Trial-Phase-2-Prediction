@@ -78,6 +78,34 @@ Raw abstract text for sentiment scoring lives in
 `data/raw/pubmed_abstracts.jsonl` (`{nct_id, pmid, title, abstract, journal,
 pub_year}`), keyed back to `trials_dataset.csv` by `nct_id`.
 
+## Feature engineering
+
+After generating `trials_dataset.csv`, create model-ready matrices with:
+
+```bash
+python3 feature_engineering.py
+```
+
+The script preserves TrialBench's original `top_split`, fits all preprocessing
+on the training rows only, and then applies the same preprocessing to the test
+rows. It:
+
+- removes outcome-leaking fields such as `overall_status`, `why_stopped`,
+  `has_results`, and completion dates;
+- converts `start_date` into time relative to January 1, 2000;
+- converts minimum and maximum ages to numeric years;
+- fills missing numerical values with the training median and standardizes
+  numerical columns;
+- fills missing categories and one-hot encodes categorical columns; and
+- automatically includes numeric sentiment features when Task 1 adds them.
+
+Output is written to `data/processed/model_ready/`:
+
+- `X_train.csv` and `X_test.csv`: clean feature matrices;
+- `y_train.csv` and `y_test.csv`: success/failure targets;
+- `preprocessor.pkl`: fitted transformations for later models; and
+- `feature_engineering_summary.json`: columns and dimensions used.
+
 
 ## Tests
 
