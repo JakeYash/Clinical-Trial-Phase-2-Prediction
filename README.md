@@ -77,6 +77,53 @@ Raw abstract text for sentiment scoring lives in
 `data/raw/pubmed_abstracts.jsonl` (`{nct_id, pmid, title, abstract, journal,
 pub_year}`), keyed back to `trials_dataset.csv` by `nct_id`.
 
+## Feature engineering
+
+After generating `trials_dataset.csv`, create model-ready matrices with:
+
+```bash
+python3 feature_engineering.py
+```
+
+The script preserves TrialBench's original `top_split`, fits all preprocessing
+on the training rows only, and then applies the same preprocessing to the test
+rows. It:
+
+- removes outcome-leaking fields such as `overall_status`, `why_stopped`,
+  `has_results`, and completion dates;
+- converts `start_date` into time relative to January 1, 2000;
+- converts minimum and maximum ages to numeric years;
+- fills missing numerical values with the training median and standardizes
+  numerical columns;
+- drops columns that are constant (or entirely blank) in the training rows,
+  since they cannot help a model; this uses training rows only, and the dropped
+  columns are listed under `constant_or_empty_columns_removed` in the summary
+  JSON; this can remove some sentiment columns on very small samples;
+- fills missing categories and one-hot encodes categorical columns; and
+- joins `data/processed/pubmed_sentiment_features.csv` (from
+  `score_sentiment.py`) onto the trials by `nct_id` when that file exists, so the
+  `pubmed_sentiment_*` columns are included. Use `--sentiment PATH` to point at
+  a different file.
+
+The scorer produces 8 sentiment feature columns: article count, mean polarity
+(`mean_score`), mean negative/neutral/positive scores, and counts by top label.
+They overlap (the means sum to 1, and the counts sum to the article count), so
+`mean_score` and `article_count` are the most compact summary.
+
+Output is written to `data/processed/model_ready/`:
+
+- `X_train.csv` and `X_test.csv`: clean feature matrices;
+- `y_train.csv` and `y_test.csv`: success/failure targets;
+- `preprocessor.pkl`: fitted transformations for later models (see the note
+  below); and
+- `feature_engineering_summary.json`: columns and dimensions used.
+
+> **Note:** `preprocessor.pkl` is a pickled scikit-learn object, so it can only be
+> loaded reliably with the same scikit-learn (and pandas/numpy) versions that
+> created it. Load it in the same environment, or regenerate it by re-running
+> `python3 feature_engineering.py` after upgrading. Only load pickle files you
+> created yourself.
+
 
 ## Score PubMed sentiment
 
