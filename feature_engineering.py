@@ -31,6 +31,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_INPUT = ROOT_DIR / "data" / "processed" / "trials_dataset.csv"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "data" / "processed" / "model_ready"
+DEFAULT_SENTIMENT = ROOT_DIR / "data" / "processed" / "pubmed_sentiment_features.csv"
 
 TARGET_COLUMN = "label"
 SPLIT_COLUMN = "top_split"
@@ -94,7 +95,33 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument(
+        "--sentiment",
+        type=Path,
+        default=DEFAULT_SENTIMENT,
+        help="Per-trial output of score_sentiment.py; skipped if absent.",
+    )
     return parser.parse_args()
+
+
+def merge_sentiment_features(df: pd.DataFrame, path: Path) -> pd.DataFrame:
+    """Left-join ``score_sentiment.py`` output onto the trial table by nct_id.
+
+    The scorer writes one row per trial to a separate CSV, so it has to be
+    joined here for the sentiment columns to reach the model.  Trials missing
+    from that file keep NaN values (imputed later from training medians).
+    """
+    sentiment = pd.read_csv(path, low_memory=False)
+    if "nct_id" not in sentiment.columns:
+        raise ValueError(f"{path}: missing nct_id column")
+    if sentiment["nct_id"].duplicated().any():
+        raise ValueError(f"{path}: nct_id must be unique (one row per trial)")
+    new_columns = [
+        column
+        for column in sentiment.columns
+        if column == "nct_id" or column not in df.columns
+    ]
+    return df.merge(sentiment[new_columns], on="nct_id", how="left")
 
 
 def add_relative_date_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -112,7 +139,7 @@ def add_relative_date_features(df: pd.DataFrame) -> pd.DataFrame:
             start_date - reference_date
         ).dt.days.astype("float64")
         result["start_month"] = start_date.dt.month.astype("float64")
-        result.drop(columns=["start_date"], inplace=True)
+        result = result.drop(columns=["start_date"])
     return result
 
 
@@ -147,7 +174,7 @@ def add_age_features(df: pd.DataFrame) -> pd.DataFrame:
     ):
         if source in result.columns:
             result[output] = result[source].map(_age_to_years)
-            result.drop(columns=[source], inplace=True)
+            result = result.drop(columns=[source])
     return result
 
 
@@ -254,7 +281,7 @@ def create_feature_matrices(
         for column in train_predictors.columns
         if train_predictors[column].nunique(dropna=True) <= 1
     ]
-    predictors.drop(columns=constant_columns, inplace=True)
+    predictors = predictors.drop(columns=constant_columns)
     sentiment_columns = _sentiment_columns(predictors)
 
     X_train_raw = predictors.loc[train_mask].reset_index(drop=True)
@@ -313,13 +340,25 @@ def create_feature_matrices(
     return X_train, X_test, y_train, y_test, summary, preprocessor
 
 
-def run(input_path: Path, output_dir: Path) -> None:
+def run(
+    input_path: Path,
+    output_dir: Path,
+    sentiment_path: Path | None = None,
+) -> None:
     if not input_path.exists():
         raise FileNotFoundError(
             f"Dataset not found: {input_path}\nRun pipeline.py first."
         )
 
     df = pd.read_csv(input_path, low_memory=False)
+    if sentiment_path is not None and sentiment_path.exists():
+        df = merge_sentiment_features(df, sentiment_path)
+        print(f"Merged sentiment features from {sentiment_path}")
+    else:
+        print(
+            "No sentiment features file found; run score_sentiment.py to "
+            "include PubMed sentiment."
+        )
     X_train, X_test, y_train, y_test, summary, preprocessor = (
         create_feature_matrices(df)
     )
@@ -345,4 +384,4 @@ def run(input_path: Path, output_dir: Path) -> None:
 
 if __name__ == "__main__":
     arguments = _parse_args()
-    run(arguments.input, arguments.output_dir)
+    run(arguments.input, arguments.output_dir, arguments.sentiment)
