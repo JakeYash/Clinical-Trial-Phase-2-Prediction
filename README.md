@@ -157,6 +157,34 @@ The scorer writes two files to `data/processed/`:
   have zero counts and blank means. Use `pubmed_collection_status` from the
   trial table to distinguish uncollected trials from collected trials.
 
+## Random Forest comparison
+
+After feature engineering, run:
+
+```bash
+python3 random_forest.py
+```
+
+This trains two 100-tree Random Forest classifiers with seed 42 using the
+existing model-ready train/test split: all available features, and the same
+features with `pubmed_sentiment_*` columns removed. No preprocessing is refitted.
+Other PubMed features, such as mention counts, remain in both models.
+Use `--input-dir PATH` or `--output PATH` to override the defaults.
+
+The report at `outputs/random_forest_sentiment_comparison.json` contains
+accuracy, precision, recall, F1, ROC-AUC, confusion matrices, predictions,
+success probabilities, feature lists, and hyperparameters. Confusion matrices
+use rows for actual labels and columns for predictions, ordered `[0, 1]`.
+Success (1) is the positive class; undefined precision/recall/F1 are set to 0.
+ROC-AUC is JSON `null` with an explanation when the test set has one class.
+Missing sentiment columns are reported and available columns are removed; if
+none are present, both models use identical inputs. The generated report is
+ignored by Git under the existing output rule.
+
+Small sample results are only a smoke test and cannot establish whether
+sentiment improves generalization. The comparison measures the incremental
+contribution of sentiment alongside the other retained features.
+
 ## Tests
 
 ```bash
