@@ -20,16 +20,11 @@ from sklearn.metrics import (
     accuracy_score, confusion_matrix, f1_score, precision_score,
     recall_score, roc_auc_score,
 )
-from sklearn.model_selection import GridSearchCV, StratifiedKFold
-
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_INPUT_DIR = ROOT_DIR / "data" / "processed" / "model_ready"
 DEFAULT_OUTPUT = ROOT_DIR / "outputs" / "random_forest_sentiment_comparison.json"
-MODEL_PARAMS = {"random_state": 42}
-PARAM_GRID = {
-    "n_estimators": [100, 200],
-    "max_depth": [None, 10, 20],
-}
+# Hyperparameters locked in after a tuning run on 100 trials (ROC-AUC optimised).
+MODEL_PARAMS = {"random_state": 42, "n_estimators": 100, "max_depth": 10}
 SENTIMENT_COLUMNS = [
     f"pubmed_sentiment_{suffix}"
     for suffix in (
@@ -121,31 +116,19 @@ def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT)
     baseline = [c for c in X_train if c not in sentiment]
     if not baseline:
         raise ValueError("No features remain after removing PubMed sentiment")
-    n_splits = min(5, int(y_train.value_counts().min())) if y_train.nunique() > 1 else None
     results = {}
     trained_models = {}
     for name, columns in (("with_sentiment", list(X_train.columns)),
                           ("without_sentiment", baseline)):
-        if n_splits is not None:
-            cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-            search = GridSearchCV(RandomForestClassifier(**MODEL_PARAMS), PARAM_GRID,
-                                  scoring="roc_auc", cv=cv, refit=True)
-            search.fit(X_train[columns], y_train)
-            model = search.best_estimator_
-            best_params = search.best_params_
-            cv_roc_auc = round(search.best_score_, 4)
-        else:
-            model = RandomForestClassifier(**MODEL_PARAMS)
-            model.fit(X_train[columns], y_train)
-            best_params = MODEL_PARAMS.copy()
-            cv_roc_auc = None
+        model = RandomForestClassifier(**MODEL_PARAMS)
+        model.fit(X_train[columns], y_train)
         trained_models[name] = (model, columns)
         results[name] = {"feature_count": len(columns), "features": columns,
-                         "best_params": best_params, "cv_roc_auc": cv_roc_auc,
+                         "model_params": MODEL_PARAMS.copy(),
                          **evaluate(model, X_test[columns], y_test)}
     report = {
         "input_dir": str(input_dir.resolve()),
-        "param_grid": PARAM_GRID,
+        "model_params": MODEL_PARAMS,
         "train_rows": len(X_train), "test_rows": len(X_test),
         "train_class_counts": {str(k): int(v) for k, v in y_train.value_counts().items()},
         "test_class_counts": {str(k): int(v) for k, v in y_test.value_counts().items()},

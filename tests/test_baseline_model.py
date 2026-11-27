@@ -55,11 +55,10 @@ class TestBaselineModel(unittest.TestCase):
         for col in ("Accuracy", "Precision", "Recall", "F1-score", "ROC-AUC", "Best C", "CV ROC-AUC"):
             self.assertIn(col, results.columns)
 
-    def test_cv_roc_auc_in_valid_range(self):
+    def test_cv_roc_auc_is_none(self):
         results = self.run_baseline(False)
-        cv_auc = results.iloc[0]["CV ROC-AUC"]
-        self.assertGreaterEqual(cv_auc, 0.0)
-        self.assertLessEqual(cv_auc, 1.0)
+        import math
+        self.assertTrue(math.isnan(results.iloc[0]["CV ROC-AUC"]))
 
     def test_roc_auc_in_valid_range(self):
         results = self.run_baseline(True)

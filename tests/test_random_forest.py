@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
-from random_forest import SENTIMENT_COLUMNS, evaluate, load_data, run, PARAM_GRID
+from random_forest import SENTIMENT_COLUMNS, MODEL_PARAMS, evaluate, load_data, run
 
 
 class RandomForestTests(unittest.TestCase):
@@ -38,12 +38,11 @@ class RandomForestTests(unittest.TestCase):
             self.root / "y_test.csv", index=False)
 
     def test_comparison_saved_and_reproducible(self):
-        minimal_grid = {"n_estimators": [10], "max_depth": [None], "class_weight": ["balanced_subsample"]}
         output = self.root / "out" / "comparison.json"
-        with patch("random_forest.PARAM_GRID", minimal_grid):
+        with patch("random_forest.MODEL_PARAMS", {**MODEL_PARAMS, "n_estimators": 10}):
             report = run(self.root, output)
         self.assertEqual(report, json.loads(output.read_text()))
-        with patch("random_forest.PARAM_GRID", minimal_grid):
+        with patch("random_forest.MODEL_PARAMS", {**MODEL_PARAMS, "n_estimators": 10}):
             self.assertEqual(report, run(self.root, output))
         self.assertEqual(report["sentiment_columns_removed"], SENTIMENT_COLUMNS)
         self.assertEqual(report["train_rows"], 6)
@@ -51,9 +50,7 @@ class RandomForestTests(unittest.TestCase):
         self.assertEqual(report["test_labels"], [0, 1])
         for name, result in report["models"].items():
             self.assertEqual(len(result["predictions"]), 2)
-            self.assertIn("best_params", result)
-            self.assertIn("cv_roc_auc", result)
-            self.assertIsNotNone(result["cv_roc_auc"])
+            self.assertIn("model_params", result)
         self.assertEqual(report["models"]["with_sentiment"]["feature_count"], len(self.X.columns))
         self.assertEqual(report["models"]["without_sentiment"]["feature_count"], 1)
 
