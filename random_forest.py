@@ -10,6 +10,9 @@ import argparse
 import json
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -77,6 +80,28 @@ def evaluate(model: RandomForestClassifier, X: pd.DataFrame, y: pd.Series) -> di
     }
 
 
+def plot_feature_importance(
+    model: RandomForestClassifier,
+    feature_names: list[str],
+    output_path: Path,
+    top_n: int = 20,
+) -> None:
+    """Save a horizontal bar chart of the top_n most important features."""
+    importances = model.feature_importances_
+    indices = np.argsort(importances)[-top_n:]
+    names = [feature_names[i] for i in indices]
+    values = importances[indices]
+
+    fig, ax = plt.subplots(figsize=(9, max(4, top_n * 0.35)))
+    ax.barh(names, values)
+    ax.set_xlabel("Mean decrease in impurity")
+    ax.set_title(f"Random Forest — Top {top_n} Feature Importances")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Feature importance plot saved to: {output_path}")
+
+
 def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT) -> dict:
     X_train, X_test, y_train, y_test = load_data(input_dir)
     sentiment = [c for c in X_train if c.startswith("pubmed_sentiment_")]
@@ -92,10 +117,12 @@ def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT)
     if not baseline:
         raise ValueError("No features remain after removing PubMed sentiment")
     results = {}
+    trained_models = {}
     for name, columns in (("with_sentiment", list(X_train.columns)),
                           ("without_sentiment", baseline)):
         model = RandomForestClassifier(**MODEL_PARAMS)
         model.fit(X_train[columns], y_train)
+        trained_models[name] = (model, columns)
         results[name] = {"feature_count": len(columns), "features": columns,
                          **evaluate(model, X_test[columns], y_test)}
     report = {
@@ -119,6 +146,11 @@ def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT)
     for note in notes:
         print(note)
     print(f"Comparison saved to: {output_path}")
+
+    for name, (model, columns) in trained_models.items():
+        plot_path = output_path.parent / f"random_forest_feature_importance_{name}.png"
+        plot_feature_importance(model, columns, plot_path)
+
     return report
 
 
