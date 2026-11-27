@@ -54,22 +54,19 @@ class TestBaselineModel(unittest.TestCase):
 
             # Locate and run the baseline model script
             script = Path(__file__).resolve().parents[1] / "baseline_model.py"
+            results_file = root / "outputs" / "baseline_model" / "baseline_model_results.csv"
 
             completed = subprocess.run(
-                [sys.executable, str(script)],
-                cwd=root,
+                [sys.executable, str(script),
+                 "--input-dir", str(data_folder),
+                 "--output", str(results_file)],
                 capture_output=True,
-                text=True
+                text=True,
             )
 
             # Check that the script ran successfully
             self.assertEqual(
                 completed.returncode, 0, completed.stderr
-            )
-
-            # Check that the results file was generated
-            results_file = (
-                root / "outputs/baseline_model/baseline_model_results.csv"
             )
 
             self.assertTrue(results_file.exists())
