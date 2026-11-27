@@ -157,6 +157,68 @@ The scorer writes two files to `data/processed/`:
   have zero counts and blank means. Use `pubmed_collection_status` from the
   trial table to distinguish uncollected trials from collected trials.
 
+## Baseline Logistic Regression Model
+
+The baseline model predicts Phase 2 clinical trial success or failure
+using logistic regression. Two versions of the model are evaluated:
+
+- Logistic regression without PubMed sentiment features.
+- Logistic regression with PubMed sentiment features.
+
+### Run
+
+After generating the model-ready feature matrices, run:
+
+```bash
+python3 baseline_model.py
+```
+
+The script reads the following files from
+`data/processed/model_ready/`:
+
+- `X_train.csv`
+- `X_test.csv`
+- `y_train.csv`
+- `y_test.csv`
+
+Both models preserve TrialBench's original train/test split and use
+the same logistic regression settings and clinical trial observations.
+The model without sentiment excludes columns beginning with
+`pubmed_sentiment_`.
+
+If sentiment features are unavailable, the script evaluates only the
+model without sentiment and displays a message explaining that the
+second model was skipped.
+
+### Evaluation Metrics
+
+The models are evaluated using:
+
+- Accuracy
+- Precision
+- Recall
+- F1-score
+- ROC-AUC
+- Classification report
+- Confusion matrix
+
+Precision, recall, and F1-score in the comparison table use clinical
+trial success (label 1) as the positive class.
+
+### Output
+
+Model performance results are saved to:
+
+`outputs/baseline_model/baseline_model_results.csv`
+
+This file can be used for model comparisons and performance
+visualizations.
+
+Results generated from small test samples should be treated as
+preliminary. A larger dataset is needed to reliably evaluate
+predictive performance and the contribution of sentiment features.
+
+
 ## Random Forest comparison
 
 After feature engineering, run:
