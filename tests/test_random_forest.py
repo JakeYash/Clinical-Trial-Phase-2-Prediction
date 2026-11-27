@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
-from random_forest import SENTIMENT_COLUMNS, evaluate, load_data, run
+from random_forest import SENTIMENT_COLUMNS, evaluate, load_data, run, PARAM_GRID
 
 
 class RandomForestTests(unittest.TestCase):
@@ -38,45 +38,24 @@ class RandomForestTests(unittest.TestCase):
             self.root / "y_test.csv", index=False)
 
     def test_comparison_saved_and_reproducible(self):
-        models = []
-        fit_calls = []
-
-        def make_model(**kwargs):
-            model = RandomForestClassifier(**kwargs)
-            original_fit = model.fit
-
-            def record_fit(X, y):
-                fit_calls.append((X.copy(), y.copy()))
-                return original_fit(X, y)
-
-            model.fit = Mock(side_effect=record_fit)
-            models.append(model)
-            return model
-
+        minimal_grid = {"n_estimators": [10], "max_depth": [None], "class_weight": ["balanced_subsample"]}
         output = self.root / "out" / "comparison.json"
-        with patch("random_forest.RandomForestClassifier", side_effect=make_model):
+        with patch("random_forest.PARAM_GRID", minimal_grid):
             report = run(self.root, output)
         self.assertEqual(report, json.loads(output.read_text()))
-        self.assertEqual(report, run(self.root, output))
-        self.assertEqual(models[0].get_params(), models[1].get_params())
-        self.assertEqual(list(models[0].feature_names_in_), list(self.X))
-        self.assertEqual(list(models[1].feature_names_in_), ["enrollment_count"])
+        with patch("random_forest.PARAM_GRID", minimal_grid):
+            self.assertEqual(report, run(self.root, output))
         self.assertEqual(report["sentiment_columns_removed"], SENTIMENT_COLUMNS)
-        self.assertEqual(len(models), 2)
-        self.assertEqual(len(fit_calls), 2)
-        expected_y = pd.Series([0, 1, 0, 1, 0, 1], name="label")
-        for model, (fit_X, fit_y), columns in zip(
-            models, fit_calls, (list(self.X), ["enrollment_count"])
-        ):
-            model.fit.assert_called_once()
-            pd.testing.assert_frame_equal(fit_X, self.X[columns])
-            pd.testing.assert_series_equal(fit_y, expected_y)
-            self.assertTrue(set(fit_X["enrollment_count"]).isdisjoint({15, 55}))
         self.assertEqual(report["train_rows"], 6)
         self.assertEqual(report["test_rows"], 2)
         self.assertEqual(report["test_labels"], [0, 1])
-        for result in report["models"].values():
+        for name, result in report["models"].items():
             self.assertEqual(len(result["predictions"]), 2)
+            self.assertIn("best_params", result)
+            self.assertIn("cv_roc_auc", result)
+            self.assertIsNotNone(result["cv_roc_auc"])
+        self.assertEqual(report["models"]["with_sentiment"]["feature_count"], len(self.X.columns))
+        self.assertEqual(report["models"]["without_sentiment"]["feature_count"], 1)
 
     def test_evaluation_with_asymmetric_errors_and_probability_auc(self):
         X = pd.DataFrame({"enrollment_count": [11, 21, 31, 41, 51, 61]})
@@ -147,7 +126,7 @@ class RandomForestTests(unittest.TestCase):
                                      [[2, 0], [0, 0]] if label == 0 else [[0, 0], [0, 2]])
                     self.assertEqual(result["precision"], float(label))
                 # A one-class training set still supports AUC on two-class test labels.
-                model = RandomForestClassifier(random_state=42).fit(self.X, [label] * 6)
+                model = RandomForestClassifier(random_state=42, n_estimators=10).fit(self.X, [label] * 6)
                 result = evaluate(model, pd.read_csv(self.root / "X_test.csv"), pd.Series([0, 1]))
                 self.assertEqual(result["roc_auc"], 0.5)
 

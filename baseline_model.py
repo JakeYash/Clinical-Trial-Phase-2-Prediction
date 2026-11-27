@@ -10,6 +10,7 @@ from sklearn.metrics import (
     accuracy_score, classification_report, confusion_matrix,
     f1_score, precision_score, recall_score, roc_auc_score,
 )
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_INPUT_DIR = ROOT_DIR / "data" / "processed" / "model_ready"
@@ -17,9 +18,22 @@ DEFAULT_OUTPUT = ROOT_DIR / "outputs" / "baseline_model" / "baseline_model_resul
 
 
 def train_and_evaluate(X_train, X_test, y_train, y_test, model_name):
+    base = LogisticRegression(max_iter=1000)
 
-    model = LogisticRegression(max_iter=1000)
-    model.fit(X_train, y_train)
+    if y_train.nunique() > 1:
+        n_splits = min(5, int(y_train.value_counts().min()))
+        cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+        search = GridSearchCV(base, {"C": [0.01, 0.1, 1, 10, 100]},
+                              scoring="roc_auc", cv=cv, refit=True)
+        search.fit(X_train, y_train)
+        model = search.best_estimator_
+        best_c = search.best_params_["C"]
+        cv_roc_auc = round(search.best_score_, 4)
+    else:
+        base.fit(X_train, y_train)
+        model = base
+        best_c = None
+        cv_roc_auc = None
 
     y_pred = model.predict(X_test)
     y_prob = model.predict_proba(X_test)[:, 1]
@@ -38,6 +52,7 @@ def train_and_evaluate(X_train, X_test, y_train, y_test, model_name):
     print(model_name)
     print("=" * 50)
     print("Number of features:", X_train.shape[1])
+    print("Best C:", best_c, "  CV ROC-AUC:", cv_roc_auc)
     print("Accuracy:", round(accuracy, 4))
     print("Precision:", round(precision, 4))
     print("Recall:", round(recall, 4))
@@ -51,6 +66,8 @@ def train_and_evaluate(X_train, X_test, y_train, y_test, model_name):
     return {
         "Model": model_name,
         "Features": X_train.shape[1],
+        "Best C": best_c,
+        "CV ROC-AUC": cv_roc_auc,
         "Accuracy": accuracy,
         "Precision": precision,
         "Recall": recall,
