@@ -139,9 +139,13 @@ def step4_collect_pubmed(df: pd.DataFrame) -> dict:
                 trial_organizations(row, drug_name),
                 excluded,
             )
-            pubmed_by_trial[nct_id] = records
             for rec in records:
                 f.write(json.dumps({"nct_id": nct_id, **rec}) + "\n")
+            # Keep only the fields merge.py needs — drop title/abstract to avoid
+            # holding the full text of ~870k articles in RAM for the full dataset.
+            pubmed_by_trial[nct_id] = [
+                {"pmid": r.get("pmid"), "abstract": r.get("abstract")} for r in records
+            ]
             for rec in excluded:
                 rejected.write(json.dumps({"nct_id": nct_id, **rec}) + "\n")
 
