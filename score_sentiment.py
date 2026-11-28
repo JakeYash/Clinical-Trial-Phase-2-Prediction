@@ -45,7 +45,7 @@ def iter_articles(path, trial_ids):
                 yield nct_id, pmid, text_key, article
 
 
-def score_pubmed(articles_path, trials_path, output_dir, load_model):
+def score_pubmed(articles_path, trials_path, output_dir, load_model, batch_size=32):
     with trials_path.open(encoding="utf-8", newline="") as source:
         trials = csv.DictReader(source)
         if "nct_id" not in (trials.fieldnames or []):
@@ -61,7 +61,7 @@ def score_pubmed(articles_path, trials_path, output_dir, load_model):
         article_output = Path(staging) / "pubmed_article_sentiment.jsonl"
         feature_output = Path(staging) / "pubmed_sentiment_features.csv"
         with article_output.open("w", encoding="utf-8") as sink:
-            while batch := list(islice(articles, 32)):
+            while batch := list(islice(articles, batch_size)):
                 pending = {key: text for _, _, key, text in batch if key not in cached_scores}
                 if pending:
                     if model is None:
@@ -107,9 +107,12 @@ def main():
     parser.add_argument("--trials", type=Path, default=config.FINAL_DATASET_PATH)
     parser.add_argument("--output-dir", type=Path, default=config.DATA_PROCESSED_DIR)
     parser.add_argument("--model-path", type=Path, help="Local copy of the pinned model")
+    parser.add_argument("--batch-size", type=int, default=None,
+                        help="Articles per model batch (default: 64 on GPU, 16 on CPU)")
     args = parser.parse_args()
     score_pubmed(args.articles, args.trials, args.output_dir,
-                 lambda: PubMedSentimentModel(args.model_path))
+                 lambda: PubMedSentimentModel(args.model_path, args.batch_size),
+                 batch_size=args.batch_size or 32)
 
 
 if __name__ == "__main__":

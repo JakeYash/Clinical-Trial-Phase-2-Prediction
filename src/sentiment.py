@@ -13,19 +13,21 @@ HYPOTHESES = (
 class PubMedSentimentModel:
     """Return negative, neutral and positive scores for each article."""
 
-    def __init__(self, model_path=None, batch_size=16):
+    def __init__(self, model_path=None, batch_size=None):
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
         self.torch = torch
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         source = model_path or MODEL_ID
         kwargs = {} if model_path else {"revision": MODEL_REVISION}
         self.tokenizer = AutoTokenizer.from_pretrained(source, **kwargs)
         self.model = AutoModelForSequenceClassification.from_pretrained(
             source, use_safetensors=True, **kwargs
-        ).eval()
+        ).eval().to(self.device)
         self.entailment_id = self.model.config.label2id["entailment"]
-        self.batch_size = batch_size
+        # Default batch size: 64 on GPU (faster), 16 on CPU (memory-safe).
+        self.batch_size = batch_size or (64 if self.device.type == "cuda" else 16)
         self.hypotheses = [
             self.tokenizer.encode(text, add_special_tokens=False) for text in HYPOTHESES
         ]
@@ -55,7 +57,8 @@ class PubMedSentimentModel:
                 inputs = self.tokenizer.pad(
                     pairs[start:start + self.batch_size], return_tensors="pt"
                 )
-                logits.append(self.model(**inputs).logits[:, self.entailment_id])
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                logits.append(self.model(**inputs).logits[:, self.entailment_id].cpu())
 
         scores = self.torch.cat(logits).reshape(-1, len(LABELS)).softmax(dim=1).tolist()
         totals = [[0.0] * len(LABELS) for _ in texts]
