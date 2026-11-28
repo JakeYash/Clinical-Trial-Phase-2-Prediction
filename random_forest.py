@@ -24,8 +24,11 @@ from sklearn.metrics import (
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_INPUT_DIR = ROOT_DIR / "data" / "processed" / "model_ready"
 DEFAULT_OUTPUT = ROOT_DIR / "outputs" / "random_forest_sentiment_comparison.json"
-# Hyperparameters locked in after a tuning run on 100 trials (ROC-AUC optimised).
-MODEL_PARAMS = {"random_state": 42, "n_estimators": 100, "max_depth": 10}
+# Best params per variant, locked in after tuning on 100 trials with sentiment (ROC-AUC optimised).
+MODEL_PARAMS = {
+    "with_sentiment":    {"random_state": 42, "n_estimators": 200, "max_depth": 10},
+    "without_sentiment": {"random_state": 42, "n_estimators": 100, "max_depth": 10},
+}
 SENTIMENT_COLUMNS = [
     f"pubmed_sentiment_{suffix}"
     for suffix in (
@@ -121,11 +124,12 @@ def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT)
     trained_models = {}
     for name, columns in (("with_sentiment", list(X_train.columns)),
                           ("without_sentiment", baseline)):
-        model = RandomForestClassifier(**MODEL_PARAMS)
+        params = MODEL_PARAMS[name]
+        model = RandomForestClassifier(**params)
         model.fit(X_train[columns], y_train)
         trained_models[name] = (model, columns)
         results[name] = {"feature_count": len(columns), "features": columns,
-                         "model_params": MODEL_PARAMS.copy(),
+                         "model_params": params,
                          **evaluate(model, X_test[columns], y_test)}
     report = {
         "input_dir": str(input_dir.resolve()),

@@ -39,10 +39,11 @@ class RandomForestTests(unittest.TestCase):
 
     def test_comparison_saved_and_reproducible(self):
         output = self.root / "out" / "comparison.json"
-        with patch("random_forest.MODEL_PARAMS", {**MODEL_PARAMS, "n_estimators": 10}):
+        fast_params = {k: {**v, "n_estimators": 10} for k, v in MODEL_PARAMS.items()}
+        with patch("random_forest.MODEL_PARAMS", fast_params):
             report = run(self.root, output)
         self.assertEqual(report, json.loads(output.read_text()))
-        with patch("random_forest.MODEL_PARAMS", {**MODEL_PARAMS, "n_estimators": 10}):
+        with patch("random_forest.MODEL_PARAMS", fast_params):
             self.assertEqual(report, run(self.root, output))
         self.assertEqual(report["sentiment_columns_removed"], SENTIMENT_COLUMNS)
         self.assertEqual(report["train_rows"], 6)
@@ -107,8 +108,8 @@ class RandomForestTests(unittest.TestCase):
                 self.assertTrue(report["notes"])
                 self.assertEqual(len(report["missing_sentiment_columns"]), 9 - len(columns))
                 if len(columns) == 1:
-                    self.assertEqual(report["models"]["with_sentiment"],
-                                     report["models"]["without_sentiment"])
+                    self.assertEqual(report["models"]["with_sentiment"]["features"],
+                                     report["models"]["without_sentiment"]["features"])
 
     def test_single_class_train_and_test(self):
         for label in (0, 1):

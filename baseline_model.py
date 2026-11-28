@@ -14,13 +14,14 @@ from sklearn.metrics import (
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_INPUT_DIR = ROOT_DIR / "data" / "processed" / "model_ready"
 DEFAULT_OUTPUT = ROOT_DIR / "outputs" / "baseline_model" / "baseline_model_results.csv"
+# Best C per variant, locked in after tuning on 100 trials with sentiment (ROC-AUC optimised).
+BEST_C = {"without_sentiment": 1, "with_sentiment": 100}
 
 
-def train_and_evaluate(X_train, X_test, y_train, y_test, model_name):
-    # C=1 locked in after a tuning run on 100 trials (ROC-AUC optimised).
-    model = LogisticRegression(C=1, max_iter=1000)
+def train_and_evaluate(X_train, X_test, y_train, y_test, model_name, c):
+    model = LogisticRegression(C=c, max_iter=1000)
     model.fit(X_train, y_train)
-    best_c = 1
+    best_c = c
     cv_roc_auc = None
 
     y_pred = model.predict(X_test)
@@ -85,6 +86,7 @@ def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT)
     model, row = train_and_evaluate(
         X_train_no_sent, X_test_no_sent, y_train, y_test,
         "Logistic Regression Without Sentiment",
+        c=BEST_C["without_sentiment"],
     )
     trained_models["without_sentiment"] = (model, list(X_train_no_sent.columns))
     results.append(row)
@@ -93,6 +95,7 @@ def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT)
         model, row = train_and_evaluate(
             X_train, X_test, y_train, y_test,
             "Logistic Regression With Sentiment",
+            c=BEST_C["with_sentiment"],
         )
         trained_models["with_sentiment"] = (model, list(X_train.columns))
         results.append(row)
