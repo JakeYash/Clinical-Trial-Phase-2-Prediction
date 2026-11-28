@@ -68,6 +68,20 @@ def _get(endpoint: str, params: dict) -> requests.Response:
     return resp
 
 
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    retry=retry_if_exception_type((requests.exceptions.RequestException,)),
+    reraise=True,
+)
+def _post(endpoint: str, params: dict) -> requests.Response:
+    """POST variant for queries that exceed URL length limits (e.g. many MeSH terms)."""
+    url = f"{config.ENTREZ_BASE_URL}/{endpoint}"
+    resp = requests.post(url, data={**_common_params(), **params}, timeout=30)
+    resp.raise_for_status()
+    return resp
+
+
 def _date_window(before_date: Optional[str]) -> Optional[tuple]:
     """
     Returns (mindate, maxdate) in YYYY/MM/DD, ending strictly before `before_date`
@@ -204,7 +218,7 @@ def search_pmids(
             "mindate": mindate,
             "maxdate": maxdate,
         }
-        resp = _get("esearch.fcgi", params)
+        resp = _post("esearch.fcgi", params)
         time.sleep(config.ENTREZ_REQUEST_DELAY_SEC)
 
         try:
