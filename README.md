@@ -227,11 +227,13 @@ After feature engineering, run:
 python3 random_forest.py
 ```
 
-This trains two 100-tree Random Forest classifiers with seed 42 using the
-existing model-ready train/test split: all available features, and the same
-features with `pubmed_sentiment_*` columns removed. No preprocessing is refitted.
+This trains two Random Forest classifiers using the existing model-ready
+train/test split: all available features, and the same features with
+`pubmed_sentiment_*` columns removed. No preprocessing is refitted.
 Other PubMed features, such as mention counts, remain in both models.
-Use `--input-dir PATH` or `--output PATH` to override the defaults.
+Hyperparameters were locked in after a tuning run (ROC-AUC optimised):
+100 trees / max depth 10 without sentiment; 200 trees / max depth 10 with
+sentiment. Use `--input-dir PATH` or `--output PATH` to override the defaults.
 
 The report at `outputs/random_forest_sentiment_comparison.json` contains
 accuracy, precision, recall, F1, ROC-AUC, confusion matrices, predictions,

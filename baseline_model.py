@@ -5,6 +5,10 @@ import argparse
 from pathlib import Path
 
 import joblib
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -16,6 +20,25 @@ DEFAULT_INPUT_DIR = ROOT_DIR / "data" / "processed" / "model_ready"
 DEFAULT_OUTPUT = ROOT_DIR / "outputs" / "baseline_model" / "baseline_model_results.csv"
 # Best C per variant, locked in after tuning on 100 trials with sentiment (ROC-AUC optimised).
 BEST_C = {"without_sentiment": 1, "with_sentiment": 100}
+
+
+def plot_coefficients(model: LogisticRegression, feature_names: list, output_path: Path, top_n: int = 20) -> None:
+    """Save a horizontal bar chart of the top_n coefficients by absolute value."""
+    coefs = model.coef_[0]
+    indices = np.argsort(np.abs(coefs))[-top_n:]
+    names = [feature_names[i] for i in indices]
+    values = coefs[indices]
+    colors = ["#d62728" if v < 0 else "#1f77b4" for v in values]
+
+    fig, ax = plt.subplots(figsize=(9, max(4, top_n * 0.35)))
+    ax.barh(names, values, color=colors)
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_xlabel("Coefficient (positive = favours success)")
+    ax.set_title(f"Logistic Regression — Top {top_n} Coefficients")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Coefficient plot saved to: {output_path}")
 
 
 def train_and_evaluate(X_train, X_test, y_train, y_test, model_name, c):
@@ -117,6 +140,8 @@ def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT)
         pkl_path = output_path.parent / f"logistic_regression_{name}.pkl"
         joblib.dump({"model": model, "features": features}, pkl_path)
         print(f"Model saved to: {pkl_path}")
+        plot_path = output_path.parent / f"logistic_regression_coefficients_{name}.png"
+        plot_coefficients(model, features, plot_path)
 
     return results_df
 
