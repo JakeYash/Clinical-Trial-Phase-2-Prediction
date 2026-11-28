@@ -10,6 +10,7 @@ import argparse
 import json
 from pathlib import Path
 
+import joblib
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -151,6 +152,9 @@ def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT)
     for name, (model, columns) in trained_models.items():
         plot_path = output_path.parent / f"random_forest_feature_importance_{name}.png"
         plot_feature_importance(model, columns, plot_path)
+        pkl_path = output_path.parent / f"random_forest_{name}.pkl"
+        joblib.dump({"model": model, "features": columns, "model_params": MODEL_PARAMS}, pkl_path)
+        print(f"Model saved to: {pkl_path}")
 
     return report
 

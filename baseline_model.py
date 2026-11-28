@@ -4,6 +4,7 @@
 import argparse
 from pathlib import Path
 
+import joblib
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -50,7 +51,7 @@ def train_and_evaluate(X_train, X_test, y_train, y_test, model_name):
     print("Confusion Matrix:")
     print(confusion_matrix(y_test, y_pred, labels=[0, 1]))
 
-    return {
+    return model, {
         "Model": model_name,
         "Features": X_train.shape[1],
         "Best C": best_c,
@@ -78,17 +79,23 @@ def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT)
     X_train_no_sent = X_train.drop(columns=sentiment_columns)
     X_test_no_sent = X_test.drop(columns=sentiment_columns)
 
+    trained_models = {}
     results = []
-    results.append(train_and_evaluate(
+
+    model, row = train_and_evaluate(
         X_train_no_sent, X_test_no_sent, y_train, y_test,
         "Logistic Regression Without Sentiment",
-    ))
+    )
+    trained_models["without_sentiment"] = (model, list(X_train_no_sent.columns))
+    results.append(row)
 
     if sentiment_columns:
-        results.append(train_and_evaluate(
+        model, row = train_and_evaluate(
             X_train, X_test, y_train, y_test,
             "Logistic Regression With Sentiment",
-        ))
+        )
+        trained_models["with_sentiment"] = (model, list(X_train.columns))
+        results.append(row)
     else:
         print("\nNo sentiment features available. Skipping model with sentiment.")
 
@@ -102,6 +109,11 @@ def run(input_dir: Path = DEFAULT_INPUT_DIR, output_path: Path = DEFAULT_OUTPUT)
     results_df.to_csv(output_path, index=False)
     print("\nModel results saved successfully!")
     print("Results saved in:", output_path)
+
+    for name, (model, features) in trained_models.items():
+        pkl_path = output_path.parent / f"logistic_regression_{name}.pkl"
+        joblib.dump({"model": model, "features": features}, pkl_path)
+        print(f"Model saved to: {pkl_path}")
 
     return results_df
 
